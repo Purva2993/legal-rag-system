@@ -36,31 +36,42 @@ class RAGPipeline:
         self.output_guard = OutputGuard()
         self.memory = ConversationMemory()
         self.all_chunks = []
-        self.retriever: Optional[HybridRetriever] = None
-        
-        # Try to load existing index
-        if self.vectorstore.load_existing():
-            logger.info("Existing vector store loaded. Ready to query.")
-            # Automatically rebuild retriever from saved chunks
-            try:
-                saved_chunks = self.vectorstore.vectorstore.get()
-                if saved_chunks and saved_chunks['documents']:
+        self.retriever = None
+        self._rebuild_retriever_from_disk()
+
+    def _rebuild_retriever_from_disk(self):
+        """
+        On every startup, try to load existing vector store
+        and rebuild the retriever automatically.
+        No manual re-ingestion needed.
+        """
+        try:
+            if self.vectorstore.load_existing():
+                saved = self.vectorstore.vectorstore.get()
+                if saved and saved.get('documents'):
                     from langchain_core.documents import Document
-                    docs = [
+                    self.all_chunks = [
                         Document(
                             page_content=text,
                             metadata=meta
                         )
                         for text, meta in zip(
-                            saved_chunks['documents'],
-                            saved_chunks['metadatas']
+                            saved['documents'],
+                            saved['metadatas']
                         )
                     ]
-                    self.all_chunks = docs
-                    self.retriever = HybridRetriever(self.vectorstore, self.all_chunks)
-                    logger.info(f"Retriever rebuilt with {len(docs)} chunks")
-            except Exception as e:
-                logger.warning(f"Could not rebuild retriever automatically: {e}")
+                    self.retriever = HybridRetriever(
+                        self.vectorstore,
+                        self.all_chunks
+                    )
+                    logger.info(
+                        f"Auto-rebuilt retriever with "
+                        f"{len(self.all_chunks)} chunks. Ready to query."
+                    )
+                else:
+                    logger.info("No existing chunks found. Please ingest a document.")
+        except Exception as e:
+            logger.warning(f"Could not rebuild retriever: {e}")
     
     def ingest(self, file_path: str) -> dict:
         """
